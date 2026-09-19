@@ -1,5 +1,104 @@
 import {NextResponse} from 'next/server';
-import fs from 'fs/promises'; import path from 'path';
-function split(s:string){let a:string[]=[],c='',q='';for(let i=0;i<s.length;i++){const ch=s[i];if(q){if(ch===q&&s[i-1]!=='\\')q='';else if(ch===q&&s[i-1]==='\\'){};c+=ch}else if(ch==="'"||ch==='"'){q=ch;c+=ch}else if(ch===','){a.push(c.trim());c=''}else c+=ch}a.push(c.trim());return a.map(x=>{x=x.trim();if((x.startsWith("'")&&x.endsWith("'"))||(x.startsWith('"')&&x.endsWith('"')))x=x.slice(1,-1);return x.replace(/''/g,"'")})}
-function parse(sql:string){const out:any[]=[];const re=/INSERT\s+INTO\s+[`"']?x_world[`"']?\s+VALUES\s*/ig;let m;while((m=re.exec(sql))){let i=m.index+m[0].length,d=0,q='',st=i;for(;i<sql.length;i++){const ch=sql[i];if(q){if(ch===q&&sql[i-1]!=='\\')q='';continue}if(ch==="'"||ch==='"'){q=ch;continue}if(ch==='('){d++;if(d===1)st=i+1}else if(ch===')'){d--;if(d===0){const v=split(sql.slice(st,i));if(v.length>=11){out.push({id:+v[0],x:+v[1],y:+v[2],tribe:+v[3],villageId:+v[4],name:v[5],playerId:+v[6],player:v[7],allianceId:+v[8],alliance:v[9],pop:+v[10]||0})}}}if(d===0&&ch===';')break}}return out}
-export async function GET(req:Request){const u=new URL(req.url);const secret=req.headers.get('x-update-secret');if(process.env.UPDATE_SECRET&&secret!==process.env.UPDATE_SECRET)return NextResponse.json({error:'unauthorized'},{status:401});const url=process.env.TTQ_MAP_URL||'https://ttq.x2.europe.travian.com/map.sql';try{const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`map.sql HTTP ${r.status}`);const sql=await r.text();const villages=parse(sql);if(!villages.length)throw new Error('No x_world rows parsed');await fs.mkdir(path.join(process.cwd(),'data'),{recursive:true});await fs.writeFile(path.join(process.cwd(),'data','villages.json'),JSON.stringify(villages));process.env.MAP_UPDATED_AT=new Date().toISOString();return NextResponse.json({ok:true,count:villages.length,updatedAt:process.env.MAP_UPDATED_AT})}catch(e){return NextResponse.json({ok:false,error:String(e)},{status:500})}}
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+type Village = {
+  id: number;
+  x: number;
+  y: number;
+  tribe: number;
+  villageId: number;
+  name: string;
+  playerId: number;
+  player: string;
+  allianceId: number;
+  alliance: string;
+  pop: number;
+};
+
+function asNumber(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function asString(value: unknown) {
+  return value == null ? '' : String(value);
+}
+
+function normalizeVillage(value: Record<string, unknown>): Village {
+  return {
+    id: asNumber(value.id ?? value.villageId),
+    x: asNumber(value.x),
+    y: asNumber(value.y),
+    tribe: asNumber(value.tribe),
+    villageId: asNumber(value.villageId ?? value.id),
+    name: asString(value.name ?? value.village),
+    playerId: asNumber(value.playerId),
+    player: asString(value.player ?? value.playerName),
+    allianceId: asNumber(value.allianceId),
+    alliance: asString(value.alliance ?? value.allianceName),
+    pop: asNumber(value.pop ?? value.population),
+  };
+}
+
+async function readVillages(): Promise<Village[]> {
+  // The generated snapshot is kept at the repository root. The second path
+  // keeps the endpoint compatible with older map update jobs.
+  const locations = [
+    path.join(process.cwd(), 'villages.json'),
+    path.join(process.cwd(), 'data', 'villages.json'),
+  ];
+
+  let lastError: unknown;
+  for (const location of locations) {
+    try {
+      const contents = await fs.readFile(location, 'utf8');
+      const parsed: unknown = JSON.parse(contents);
+      if (!Array.isArray(parsed)) throw new Error('Village snapshot is not an array');
+      return parsed
+        .filter((v): v is Record<string, unknown> => !!v && typeof v === 'object')
+        .map(normalizeVillage);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Village snapshot not found');
+}
+
+export async function GET(request: Request) {
+  const query = new URL(request.url).searchParams.get('q')?.trim() ?? '';
+
+  if (!query) return NextResponse.json({ villages: [] });
+
+  try {
+    const villages = await readVillages();
+    const normalizedQuery = query.toLocaleLowerCase('sv-SE');
+    const coordinate = query.match(/^\s*(-?\d+)\s*[|,; ]\s*(-?\d+)\s*$/);
+
+    const matches = coordinate
+      ? villages.filter((v) => v.x === Number(coordinate[1]) && v.y === Number(coordinate[2]))
+      : villages.filter((v) => {
+          const haystack = [
+            v.name,
+            v.player,
+            v.alliance,
+            `${v.x}|${v.y}`,
+            `${v.x},${v.y}`,
+            String(v.villageId),
+          ].join(' ').toLocaleLowerCase('sv-SE');
+          return haystack.includes(normalizedQuery);
+        });
+
+    return NextResponse.json(
+      { villages: matches.slice(0, 25) },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
+  } catch (error) {
+    console.error('Unable to search villages', error);
+    return NextResponse.json(
+      { villages: [], error: 'Village data is temporarily unavailable' },
+      { status: 500 },
+    );
+  }
+}
