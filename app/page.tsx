@@ -2,102 +2,35 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type Village = {
-  id: number;
-  x: number;
-  y: number;
-  tribe: number;
-  villageId: number;
-  name: string;
-  playerId: number;
-  player: string;
-  allianceId: number;
-  alliance: string;
-  pop: number;
-};
-type Attack = { id: number; source?: Village; tx: number; ty: number; unit: string; arrival: string };
-type Unit = readonly [string, number];
+type Village={id:number;x:number;y:number;tribe:number;villageId:number;name:string;playerId:number;player:string;allianceId:number;alliance:string;pop:number};
+type Attack={id:number;source?:Village;tx:number;ty:number;unit:string;arrival:string};
+type TargetDraft={tab:'village'|'coordinates';village:string;coordinates:string;priority:'Low'|'Medium'|'High';offVillage:boolean;artifactSize:string;note:string};
+type Unit=readonly [string,number];
+const units:Unit[]=[['Mercenary',7],['Bowman',6],['Spotter',19],['Steppe Rider',16],['Marksman',15],['Marauder',14],['Imperian',7],['Legionnaire',6],['Equites Imperatoris',14],['Equites Caesaris',10],['Phalanx',7],['Swordsman',6],['Theutates Thunder',19],['Druidrider',16],['Haeduan',13],['Clubswinger',7],['Spearman',7],['Axeman',6],['Paladin',10],['Teutonic Knight',9],['Catapult',3],['Ram',4],['Scout',9]];
+function distance(a:Village,x:number,y:number){const dx=Math.abs(a.x-x),dy=Math.abs(a.y-y),s=401;const wx=Math.min(dx,s-dx),wy=Math.min(dy,s-dy);return Math.sqrt(wx*wx+wy*wy)}
+function iso(d:Date){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,19)}
+function fmt(v:string){return v?new Date(v).toLocaleString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit',day:'2-digit',month:'2-digit'}):'—'}
+function departure(a:Attack){if(!a.source)return null;const sec=distance(a.source,a.tx,a.ty)/(units.find(x=>x[0]===a.unit)?.[1]||6)/2*3600;return new Date(new Date(a.arrival).getTime()-sec*1000)}
 
-const units: Unit[] = [
-  ['Mercenary', 7], ['Bowman', 6], ['Spotter', 19], ['Steppe Rider', 16], ['Marksman', 15], ['Marauder', 14],
-  ['Imperian', 7], ['Legionnaire', 6], ['Equites Imperatoris', 14], ['Equites Caesaris', 10],
-  ['Phalanx', 7], ['Swordsman', 6], ['Theutates Thunder', 19], ['Druidrider', 16], ['Haeduan', 13],
-  ['Clubswinger', 7], ['Spearman', 7], ['Axeman', 6], ['Paladin', 10], ['Teutonic Knight', 9],
-  ['Catapult', 3], ['Ram', 4], ['Scout', 9],
-];
-
-function distance(a: Village, bx: number, by: number) {
-  const dx = Math.abs(a.x - bx), dy = Math.abs(a.y - by), size = 401;
-  const wrapX = Math.min(dx, size - dx), wrapY = Math.min(dy, size - dy);
-  return Math.sqrt(wrapX * wrapX + wrapY * wrapY);
-}
-function fmtTime(value: string) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
-}
-function iso(date: Date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19); }
-function speed(name: string) { return units.find(([unit]) => unit === name)?.[1] || 6; }
-function departure(attack: Attack) {
-  if (!attack.source || !attack.arrival) return null;
-  const seconds = distance(attack.source, attack.tx, attack.ty) / (speed(attack.unit) * 2) * 3600;
-  return new Date(new Date(attack.arrival).getTime() - seconds * 1000);
-}
-
-export default function Home() {
-  const [targetQuery, setTargetQuery] = useState('');
-  const [sourceQuery, setSourceQuery] = useState('');
-  const [results, setResults] = useState<Village[]>([]);
-  const [target, setTarget] = useState<Village | null>(null);
-  const [source, setSource] = useState<Village | null>(null);
-  const [searchMode, setSearchMode] = useState<'target' | 'source'>('target');
-  const [arrival, setArrival] = useState(iso(new Date(Date.now() + 3600000)));
-  const [unit, setUnit] = useState('Marauder');
-  const [attacks, setAttacks] = useState<Attack[]>([]);
-  const [mapUpdated, setMapUpdated] = useState('—');
-  const query = searchMode === 'target' ? targetQuery : sourceQuery;
-
-  useEffect(() => {
-    fetch('/api/health').then((r) => r.json()).then((data) => setMapUpdated(data.updatedAt || '—')).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (query.trim().length < 1) { setResults([]); return; }
-      fetch('/api/search?q=' + encodeURIComponent(query))
-        .then((r) => r.json())
-        .then((data) => setResults(data.villages || []))
-        .catch(() => setResults([]));
-    }, 180);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const chooseTarget = (value: string) => { setSearchMode('target'); setTargetQuery(value); setResults([]); };
-  const chooseSource = (value: string) => { setSearchMode('source'); setSourceQuery(value); setResults([]); };
-  const setResult = (village: Village) => {
-    if (searchMode === 'target') { setTarget(village); setTargetQuery(''); }
-    else { setSource(village); setSourceQuery(''); }
-    setResults([]);
-  };
-  const add = () => {
-    if (!source || !target) return;
-    setAttacks((current) => [...current, { id: Date.now(), source, tx: target.x, ty: target.y, unit, arrival }]);
-  };
-  const stats = useMemo(() => attacks.map(departure).filter(Boolean) as Date[], [attacks]);
-
-  return <div className="shell">
-    <header className="top"><div className="brand"><div className="logo">⚔</div><div><b>TTQ Attack Planner</b><div className="muted">Tournament Europe · x2</div></div></div><div className="status"><span className="dot" /> Kartdata aktiv · {mapUpdated === '—' ? 'uppdateras automatiskt' : new Date(mapUpdated).toLocaleString('sv-SE')}</div></header>
-    <div className="layout"><aside className="side"><div className="nav active">⚔ Attack Planner</div><h4>Server</h4><div className="notice"><b>TTQ Europe</b><br />x2 · map.sql daily sync</div><h4>Data</h4><div className="nav">Byar & spelare</div><div className="nav">Allianser</div></aside>
-      <main className="main"><div className="headline"><div><h1>Attack Planner</h1><div className="muted">Planera exakta ankomster utan att importera map.sql.</div></div><button className="btn primary" onClick={add}>+ Lägg till attack</button></div>
-        <div className="stats"><div className="stat"><b>{attacks.length}</b><span>ATTACKER</span></div><div className="stat"><b>{stats.length ? fmtTime(new Date(Math.min(...stats.map((x) => x.getTime()))).toISOString()) : '—'}</b><span>TIDIGASTE AVGÅNG</span></div><div className="stat"><b>{target ? `(${target.x}|${target.y})` : '—'}</b><span>MÅL</span></div></div>
-        <div className="grid">
-          <section className="panel"><h2>1. Välj mål</h2><div className="field"><label>Sök by, spelare, allians eller koordinat</label><input className="input" value={targetQuery} onFocus={() => setSearchMode('target')} onChange={(e) => chooseTarget(e.target.value)} placeholder="Tahara · Hector · 176|-25" /></div>{target && <div className="notice" style={{ marginBottom: 10 }}>🎯 <b>{target.name}</b> · {target.player} · ({target.x}|{target.y})</div>}{searchMode === 'target' && results.length > 0 && <div className="searchResults">{results.map((v) => <div className="result" key={v.id} onClick={() => setResult(v)}><b>{v.name}</b><br /><small>{v.player} · {v.alliance || 'Ingen allians'} · ({v.x}|{v.y}) · {v.pop} pop</small></div>)}</div>}</section>
-          <section className="panel"><h2>2. Välj avsändarby</h2><div className="field"><label>Sök din by / spelare</label><input className="input" value={sourceQuery} onFocus={() => setSearchMode('source')} onChange={(e) => chooseSource(e.target.value)} placeholder="Sök spelare eller by" /></div>{source && <div className="notice" style={{ marginBottom: 10 }}>🚩 <b>{source.name}</b> · {source.player} · ({source.x}|{source.y})</div>}{searchMode === 'source' && results.length > 0 && <div className="searchResults">{results.map((v) => <div className="result" key={v.id} onClick={() => setResult(v)}><b>{v.name}</b><br /><small>{v.player} · {v.alliance || 'Ingen allians'} · ({v.x}|{v.y}) · {v.pop} pop</small></div>)}</div>}</section>
-          <section className="panel"><h2>3. Attack</h2><div className="field"><label>Trupp</label><select className="select" value={unit} onChange={(e) => setUnit(e.target.value)}>{units.map(([name]) => <option key={name}>{name}</option>)}</select></div><div className="field"><label>Önskad landningstid</label><input className="input" type="datetime-local" step="1" value={arrival} onChange={(e) => setArrival(e.target.value)} /></div><button className="btn primary" onClick={add} style={{ width: '100%' }}>Beräkna avgång</button></section>
-          <section className="panel"><h2>Operation</h2><div className="notice">TTQ kör x2. Avståndet beräknas med Travian-kartans wrap-around, och avgången räknas från vald trupphastighet.</div></section>
-        </div>
-        <section className="panel" style={{ marginTop: 16 }}><h2>Attackvågor</h2>{!attacks.length ? <div className="notice">Välj mål + avsändarby och lägg till en attack.</div> : <div style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>#</th><th>Från</th><th>Trupp</th><th>Mål</th><th>Avstånd</th><th>Landning</th><th>Avgång</th><th /></tr></thead><tbody>{attacks.map((a, i) => { const d = a.source ? distance(a.source, a.tx, a.ty) : 0; const dep = departure(a); return <tr key={a.id}><td>{i + 1}</td><td>{a.source?.name}<br /><span className="muted">({a.source?.x}|{a.source?.y})</span></td><td>{a.unit}</td><td>({a.tx}|{a.ty})</td><td>{d.toFixed(2)}</td><td>{fmtTime(a.arrival)}</td><td className="time ok">{dep ? fmtTime(dep.toISOString()) : '—'}</td><td><button className="btn" onClick={() => setAttacks((current) => current.filter((x) => x.id !== a.id))}>Ta bort</button></td></tr>; })}</tbody></table></div>}</section>
-        <div className="footer">Data source: Travian map.sql · TTQ Europe · planner does not store Travian credentials.</div>
-      </main>
-    </div>
-  </div>;
+export default function Home(){
+ const [targetQuery,setTargetQuery]=useState(''),[sourceQuery,setSourceQuery]=useState(''),[results,setResults]=useState<Village[]>([]),[target,setTarget]=useState<Village|null>(null),[source,setSource]=useState<Village|null>(null),[mode,setMode]=useState<'target'|'source'>('target');
+ const [arrival,setArrival]=useState(iso(new Date(Date.now()+3600000))),[unit,setUnit]=useState('Marauder'),[attacks,setAttacks]=useState<Attack[]>([]),[mapUpdated,setMapUpdated]=useState('—');
+ const [modal,setModal]=useState(false),[candidates,setCandidates]=useState<Village[]>([]),[draft,setDraft]=useState<TargetDraft>({tab:'village',village:'',coordinates:'',priority:'Medium',offVillage:false,artifactSize:'',note:''});
+ const q=mode==='target'?targetQuery:sourceQuery;
+ useEffect(()=>{fetch('/api/health').then(r=>r.json()).then(x=>setMapUpdated(x.updatedAt||'—')).catch(()=>{})},[]);
+ useEffect(()=>{const t=setTimeout(()=>{if(!q.trim()){setResults([]);return}fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(x=>setResults(x.villages||[])).catch(()=>setResults([]))},180);return()=>clearTimeout(t)},[q]);
+ useEffect(()=>{if(!modal)return;const q=draft.tab==='village'?draft.village:draft.coordinates;if(!q.trim()){setCandidates([]);return}const t=setTimeout(()=>fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(x=>setCandidates(x.villages||[])).catch(()=>setCandidates([])),180);return()=>clearTimeout(t)},[modal,draft.tab,draft.village,draft.coordinates]);
+ const choose=(v:Village)=>{if(mode==='target'){setTarget(v);setTargetQuery('')}else{setSource(v);setSourceQuery('')}setResults([])};
+ const selectCandidate=(v:Village)=>{setDraft(d=>({...d,village:v.name,coordinates:`${v.x}|${v.y}`}));setTarget(v)};
+ const saveTarget=()=>{if(!target){const c=draft.coordinates.match(/^\s*(-?\d+)\s*\|\s*(-?\d+)\s*$/);const v=candidates.find(x=>draft.tab==='village'?x.name.toLowerCase()===draft.village.trim().toLowerCase():x.x===Number(c?.[1])&&x.y===Number(c?.[2]));if(v)setTarget(v)}setModal(false)};
+ const add=()=>{if(source&&target)setAttacks(a=>[...a,{id:Date.now(),source,tx:target.x,ty:target.y,unit,arrival}])};
+ const stats=useMemo(()=>attacks.map(departure).filter(Boolean) as Date[],[attacks]);
+ const resultList=mode==='target'&&results.length||mode==='source'&&results.length?results:[];
+ return <div className="shell"><header className="top"><div className="brand"><div className="logo">⚔</div><div><b>TTQ Attack Planner</b><div className="muted">Tournament Europe · x2</div></div></div><div className="status"><span className="dot"/> Kartdata aktiv · {mapUpdated==='—'?'uppdateras automatiskt':mapUpdated}</div></header><div className="layout"><aside className="side"><div className="nav active">⚔ Attack Planner</div><h4>Server</h4><div className="notice"><b>TTQ Europe</b><br/>x2 · map.sql daily sync</div></aside><main className="main"><div className="headline"><div><h1>Attack Planner</h1><div className="muted">Planera exakta ankomster utan att importera map.sql.</div></div><button className="btn primary" onClick={()=>setModal(true)}>+ Lägg till mål</button></div><div className="stats"><div className="stat"><b>{attacks.length}</b><span>ATTACKER</span></div><div className="stat"><b>{stats.length?fmt(new Date(Math.min(...stats.map(x=>x.getTime()))).toISOString()):'—'}</b><span>TIDIGASTE AVGÅNG</span></div><div className="stat"><b>{target?`(${target.x}|${target.y})`:'—'}</b><span>MÅL</span></div></div><div className="grid">
+ <section className="panel"><h2>1. Välj mål</h2><div className="field"><label>Sök by, spelare, allians eller koordinat</label><input className="input" value={targetQuery} onFocus={()=>setMode('target')} onChange={e=>{setMode('target');setTargetQuery(e.target.value)}} placeholder="Tahara · Hector · 176|-25"/></div>{target&&<div className="notice">🎯 <b>{target.name}</b> · {target.player} · ({target.x}|{target.y})</div>}{mode==='target'&&resultList.length>0&&<div className="searchResults">{resultList.map(v=><div className="result" key={v.id} onClick={()=>choose(v)}><b>{v.name}</b><br/><small>{v.player} · ({v.x}|{v.y}) · {v.pop} pop</small></div>)}</div>}</section>
+ <section className="panel"><h2>2. Välj avsändarby</h2><div className="field"><label>Sök din by / spelare</label><input className="input" value={sourceQuery} onFocus={()=>setMode('source')} onChange={e=>{setMode('source');setSourceQuery(e.target.value)}} placeholder="Sök spelare eller by"/></div>{source&&<div className="notice">🚩 <b>{source.name}</b> · {source.player} · ({source.x}|{source.y})</div>}{mode==='source'&&resultList.length>0&&<div className="searchResults">{resultList.map(v=><div className="result" key={v.id} onClick={()=>choose(v)}><b>{v.name}</b><br/><small>{v.player} · ({v.x}|{v.y}) · {v.pop} pop</small></div>)}</div>}</section>
+ <section className="panel"><h2>3. Attack</h2><div className="field"><label>Trupp</label><select className="select" value={unit} onChange={e=>setUnit(e.target.value)}>{units.map(([n])=><option key={n}>{n}</option>)}</select></div><div className="field"><label>Önskad landningstid</label><input className="input" type="datetime-local" step="1" value={arrival} onChange={e=>setArrival(e.target.value)}/></div><button className="btn primary" onClick={add} style={{width:'100%'}}>Beräkna avgång</button></section><section className="panel"><h2>Operation</h2><div className="notice">Koordinater och bydata söks live från den senaste Travian-kartuppdateringen.</div></section></div>
+ <section className="panel" style={{marginTop:16}}><h2>Attackvågor</h2>{!attacks.length?<div className="notice">Välj mål + avsändarby och lägg till en attack.</div>:<div style={{overflowX:'auto'}}><table className="table"><thead><tr><th>#</th><th>Från</th><th>Trupp</th><th>Mål</th><th>Avstånd</th><th>Landning</th><th>Avgång</th><th/></tr></thead><tbody>{attacks.map((a,i)=>{const d=a.source?distance(a.source,a.tx,a.ty):0,dep=departure(a);return <tr key={a.id}><td>{i+1}</td><td>{a.source?.name}<br/><span className="muted">({a.source?.x}|{a.source?.y})</span></td><td>{a.unit}</td><td>({a.tx}|{a.ty})</td><td>{d.toFixed(2)}</td><td>{fmt(a.arrival)}</td><td className="time ok">{dep?fmt(dep.toISOString()):'—'}</td><td><button className="btn" onClick={()=>setAttacks(x=>x.filter(y=>y.id!==a.id))}>Ta bort</button></td></tr>})}</tbody></table></div>}</section><div className="footer">Data source: Travian map.sql · TTQ Europe · planner does not store Travian credentials.</div></main></div>
+ {modal&&<div className="modalBack" onClick={()=>setModal(false)}><div className="targetModal" onClick={e=>e.stopPropagation()}><div className="modalHeader"><h3>Create target</h3><button className="iconClose" onClick={()=>setModal(false)}>×</button></div><div className="tabRow"><button className={draft.tab==='village'?'tab active':'tab'} onClick={()=>setDraft(d=>({...d,tab:'village'}))}>Village</button><button className={draft.tab==='coordinates'?'tab active':'tab'} onClick={()=>setDraft(d=>({...d,tab:'coordinates'}))}>Coordinates</button></div><div className="fieldBlock"><label>{draft.tab==='village'?'Target village':'Coordinates'}</label><input className="input" value={draft.tab==='village'?draft.village:draft.coordinates} onChange={e=>setDraft(d=>draft.tab==='village'?({...d,village:e.target.value}):({...d,coordinates:e.target.value}))} placeholder={draft.tab==='village'?'Search village':'123|-45'}/>{candidates.length>0&&<div className="selectorList">{candidates.slice(0,8).map(v=><button className="selectorItem" key={v.id} onClick={()=>selectCandidate(v)}>{v.name} · {v.player} · ({v.x}|{v.y})</button>)}</div>}</div><div className="twoCols"><div className="fieldBlock half"><label>Priority</label><select className="select" value={draft.priority} onChange={e=>setDraft(d=>({...d,priority:e.target.value as TargetDraft['priority']}))}><option>Low</option><option>Medium</option><option>High</option></select></div><div className="fieldBlock half rightAlign"><label>OFF village</label><button className={draft.offVillage?'toggle active':'toggle'} onClick={()=>setDraft(d=>({...d,offVillage:!d.offVillage}))}><span className="toggleKnob"/></button></div></div><div className="fieldBlock"><label>Artifact size</label><input className="input" value={draft.artifactSize} onChange={e=>setDraft(d=>({...d,artifactSize:e.target.value}))} placeholder="----------"/></div><div className="fieldBlock"><label>Note</label><textarea className="textarea" value={draft.note} onChange={e=>setDraft(d=>({...d,note:e.target.value}))} placeholder="E.g. type of artifact or another note"/></div><div className="footerRow"><button className="btn secondary" onClick={()=>setModal(false)}>Close</button><button className="btn dark" onClick={saveTarget}>Save</button></div></div></div>}
+ </div>
 }
